@@ -245,6 +245,7 @@ async def validate_input(hass: core.HomeAssistant, data):
             data[CONF_LOCAL_KEY],
             float(data[CONF_PROTOCOL_VERSION]),
             data[CONF_ENABLE_DEBUG],
+            ports=pytuya.DEFAULT_PORTS,
         )
         if CONF_RESET_DPIDS in data:
             reset_ids_str = data[CONF_RESET_DPIDS].split(",")
@@ -284,7 +285,7 @@ async def validate_input(hass: core.HomeAssistant, data):
                 if str(new_dps) not in detected_dps:
                     detected_dps[new_dps] = -1
 
-    except (ConnectionRefusedError, ConnectionResetError) as ex:
+    except (ConnectionRefusedError, ConnectionResetError, OSError) as ex:
         raise CannotConnect from ex
     except ValueError as ex:
         raise InvalidAuth from ex

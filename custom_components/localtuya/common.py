@@ -150,6 +150,7 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
         self._entities = []
         self._local_key = self._dev_config_entry[CONF_LOCAL_KEY]
         self._default_reset_dpids = None
+        self._last_disconnect_log = 0.0
         if CONF_RESET_DPIDS in self._dev_config_entry:
             reset_ids_str = self._dev_config_entry[CONF_RESET_DPIDS].split(",")
 
@@ -195,11 +196,17 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                 float(self._dev_config_entry[CONF_PROTOCOL_VERSION]),
                 self._dev_config_entry.get(CONF_ENABLE_DEBUG, False),
                 self,
+                ports=pytuya.DEFAULT_PORTS,
             )
             self._interface.add_dps_to_request(self.dps_to_request)
         except Exception as ex:  # pylint: disable=broad-except
+            host = self._dev_config_entry[CONF_HOST]
+            ports_str = ",".join(str(p) for p in pytuya.DEFAULT_PORTS)
             self.warning(
-                f"Failed to connect to {self._dev_config_entry[CONF_HOST]}: %s", ex
+                "Failed to connect to %s (tried ports %s): %s",
+                host,
+                ports_str,
+                ex,
             )
             if self._interface is not None:
                 await self._interface.close()
@@ -217,12 +224,16 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                     self.status_updated(status)
 
                 except Exception as ex:
+                    self.warning(
+                        "Initial state retrieval failed: %s (%s)",
+                        type(ex).__name__,
+                        ex,
+                    )
                     if (self._default_reset_dpids is not None) and (
                         len(self._default_reset_dpids) > 0
                     ):
-                        self.debug(
-                            "Initial state update failed, trying reset command "
-                            + "for DP IDs: %s",
+                        self.info(
+                            "Trying reset command for DP IDs: %s",
                             self._default_reset_dpids,
                         )
                         await self._interface.reset(self._default_reset_dpids)
@@ -235,7 +246,11 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                         self._interface.start_heartbeat()
                         self.status_updated(status)
                     else:
-                        self.error("Initial state update failed, giving up: %r", ex)
+                        self.error(
+                            "Initial state update failed, giving up: %s (%s)",
+                            type(ex).__name__,
+                            ex,
+                        )
                         if self._interface is not None:
                             await self._interface.close()
                             self._interface = None
@@ -363,7 +378,11 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
         if self._connect_task is not None:
             self._connect_task.cancel()
             self._connect_task = None
-        self.warning("Disconnected - waiting for discovery broadcast")
+        # Throttle log to avoid spam (max once per 60 seconds)
+        now = time.time()
+        if now - self._last_disconnect_log >= 60:
+            self._last_disconnect_log = now
+            self.warning("Disconnected - waiting for discovery broadcast")
 
 
 class LocalTuyaEntity(RestoreEntity, pytuya.ContextualLogger):
