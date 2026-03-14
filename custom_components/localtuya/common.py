@@ -131,6 +131,26 @@ def async_config_entry_by_device_id(hass, device_id):
     return None
 
 
+class _InitialConnectListener(pytuya.TuyaListener):
+    """Listener that suppresses status_updated during initial handshake.
+
+    Some devices (e.g. heat pumps) reset the connection when status_updated
+    triggers entity dispatch during the first exchange. This wrapper defers
+    status_updated until after the initial status is retrieved.
+    """
+
+    def __init__(self, device):
+        self._device = device
+        self._initial_done = False
+
+    def status_updated(self, status):
+        if self._initial_done:
+            self._device.status_updated(status)
+
+    def disconnected(self):
+        self._device.disconnected()
+
+
 class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
     """Cache wrapper for pytuya.TuyaInterface."""
 
@@ -179,7 +199,6 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
 
     def async_connect(self):
         """Connect to device if not already connected."""
-        # self.info("async_connect: %d %r %r", self._is_closing, self._connect_task, self._interface)
         if not self._is_closing and self._connect_task is None and not self._interface:
             self._connect_task = asyncio.create_task(self._make_connection())
 
@@ -188,18 +207,25 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
         self.info("Trying to connect to %s...", self._dev_config_entry[CONF_HOST])
 
         try:
+            initial_listener = _InitialConnectListener(self)
             self._interface = await pytuya.connect(
                 self._dev_config_entry[CONF_HOST],
                 self._dev_config_entry[CONF_DEVICE_ID],
                 self._local_key,
                 float(self._dev_config_entry[CONF_PROTOCOL_VERSION]),
                 self._dev_config_entry.get(CONF_ENABLE_DEBUG, False),
-                self,
+                initial_listener,
+                ports=pytuya.DEFAULT_PORTS,
             )
-            self._interface.add_dps_to_request(self.dps_to_request)
+            # Don't add dps_to_request before first status - some devices (e.g. heat pumps)
+            # reject the connection when specific DPs are requested in the initial query.
+            # Delay: some devices need time after TCP connect before first Tuya packet.
+            await asyncio.sleep(1.5)
         except Exception as ex:  # pylint: disable=broad-except
             self.warning(
-                f"Failed to connect to {self._dev_config_entry[CONF_HOST]}: %s", ex
+                "Failed to connect to %s: %s",
+                self._dev_config_entry[CONF_HOST],
+                ex,
             )
             if self._interface is not None:
                 await self._interface.close()
@@ -213,6 +239,8 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                     if status is None:
                         raise Exception("Failed to retrieve status")
 
+                    initial_listener._initial_done = True
+                    self._interface.add_dps_to_request(self.dps_to_request)
                     self._interface.start_heartbeat()
                     self.status_updated(status)
 
@@ -232,6 +260,8 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                         if status is None or not status:
                             raise Exception("Failed to retrieve status") from ex
 
+                        initial_listener._initial_done = True
+                        self._interface.add_dps_to_request(self.dps_to_request)
                         self._interface.start_heartbeat()
                         self.status_updated(status)
                     else:
