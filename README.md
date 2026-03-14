@@ -1,5 +1,9 @@
 ![logo](https://github.com/rospogrigio/localtuya-homeassistant/blob/master/img/logo-small.png)
 
+**Fork maintained by [@YaremenkoTaras](https://github.com/YaremenkoTaras)** · Original: [rospogrigio/localtuya](https://github.com/rospogrigio/localtuya)
+
+---
+
 A Home Assistant custom Integration for local handling of Tuya-based devices.
 
 This custom integration updates device status via pushing updates instead of polling, so status updates are fast (even when manually operated).
@@ -207,6 +211,8 @@ Then, edit the device that is showing problems and check the "Enable debugging f
 * Everything listed in https://github.com/rospogrigio/localtuya-homeassistant/issues/15
 
 # Thanks to:
+
+[@YaremenkoTaras](https://github.com/YaremenkoTaras) for port fallback, Heat Pump protocol 3.4 fixes, and diagnostic improvements.
 
 NameLessJedi https://github.com/NameLessJedi/localtuya-homeassistant and mileperhour https://github.com/mileperhour/localtuya-homeassistant being the major sources of inspiration, and whose code for switches is substantially unchanged.
 
