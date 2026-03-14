@@ -727,16 +727,16 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
                 # for 3.4 devices, we get the starting seqno with the SESS_KEY_NEG_RESP message
                 self.seqno = msg.seqno
             except asyncio.TimeoutError:
-                _LOGGER.info(
-                    "[%s] Session key negotiation timeout (cmd %d, %s retries left)",
+            _LOGGER.warning(
+                "[%s] Session key negotiation timeout (cmd %d, %s retries left)",
                     self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
                     payload.cmd,
                     recv_retries - 1,
                 )
                 msg = None
             except Exception as ex:
-                _LOGGER.info(
-                    "[%s] Session key negotiation error: %s (%s)",
+            _LOGGER.warning(
+                "[%s] Session key negotiation error: %s (%s)",
                     self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
                     type(ex).__name__,
                     ex,
@@ -991,14 +991,14 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
             MessagePayload(SESS_KEY_NEG_START, self.local_nonce), 2
         )
         if not rkey or not isinstance(rkey, TuyaMessage) or len(rkey.payload) < 48:
-            _LOGGER.info(
+            _LOGGER.warning(
                 "[%s] Session key negotiation failed: no/invalid response (step 1)",
                 self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
             )
             return False
 
         if rkey.cmd != SESS_KEY_NEG_RESP:
-            _LOGGER.info(
+            _LOGGER.warning(
                 "[%s] Session key negotiation failed: wrong cmd %d (expected %d)",
                 self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
                 rkey.cmd,
@@ -1012,7 +1012,7 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
             cipher = AESCipher(self.real_local_key)
             payload = cipher.decrypt(payload, False, decode_text=False)
         except Exception as ex:
-            _LOGGER.info(
+            _LOGGER.warning(
                 "[%s] Session key negotiation failed: decrypt error (%s)",
                 self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
                 ex,
@@ -1022,7 +1022,7 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
         self.debug("decrypted session key negotiation step 2: payload=%r", payload)
 
         if len(payload) < 48:
-            _LOGGER.info(
+            _LOGGER.warning(
                 "[%s] Session key negotiation failed: response too short (%d bytes)",
                 self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
                 len(payload),
@@ -1225,7 +1225,7 @@ async def connect(
 
     for p in ports_to_try:
         if multi_port:
-            _LOGGER.info("Trying %s:%d", address, p)
+            _LOGGER.warning("Trying %s:%d", address, p)
         on_connected = loop.create_future()
         try:
             _, protocol = await loop.create_connection(
@@ -1242,16 +1242,16 @@ async def connect(
             )
             await asyncio.wait_for(on_connected, timeout=timeout)
             if multi_port:
-                _LOGGER.info("Connected to %s on port %d", address, p)
+                _LOGGER.warning("Connected to %s on port %d", address, p)
             return protocol
         except (ConnectionRefusedError, ConnectionResetError, OSError) as ex:
             last_error = ex
             errno_str = f" errno={getattr(ex, 'errno', '?')}" if hasattr(ex, "errno") else ""
-            _LOGGER.info("Port %d failed%s: %s", p, errno_str, ex)
+            _LOGGER.warning("Port %d failed%s: %s", p, errno_str, ex)
             continue
         except asyncio.TimeoutError as ex:
             last_error = ex
-            _LOGGER.info("Port %d timeout after %ds", p, timeout)
+            _LOGGER.warning("Port %d timeout after %ds", p, timeout)
             continue
 
     if last_error is not None:
