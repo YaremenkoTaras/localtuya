@@ -217,12 +217,16 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
             self.warning("Trying to connect to %s...", self._dev_config_entry[CONF_HOST])
 
         try:
+            # pytuya supports 3.1-3.4 only; devices reporting 3.5 use 3.4 protocol
+            proto = float(self._dev_config_entry[CONF_PROTOCOL_VERSION])
+            if proto >= 3.5:
+                proto = 3.4
             initial_listener = _InitialConnectListener(self)
             self._interface = await pytuya.connect(
                 self._dev_config_entry[CONF_HOST],
                 self._dev_config_entry[CONF_DEVICE_ID],
                 self._local_key,
-                float(self._dev_config_entry[CONF_PROTOCOL_VERSION]),
+                proto,
                 self._dev_config_entry.get(CONF_ENABLE_DEBUG, False),
                 initial_listener,
                 ports=pytuya.DEFAULT_PORTS,
