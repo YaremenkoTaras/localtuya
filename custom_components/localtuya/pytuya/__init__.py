@@ -163,6 +163,9 @@ NO_PROTOCOL_HEADER_CMDS = [
 
 HEARTBEAT_INTERVAL = 10
 
+# Default ports to try when connection fails (aligned with tinytuya)
+DEFAULT_PORTS = [6668, 6669, 8681]
+
 # DPS that are known to be safe to use with update_dps (0x12) command
 UPDATE_DPS_WHITELIST = [18, 19, 20]  # Socket (Wi-Fi)
 
@@ -723,7 +726,21 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
                 msg = await self.dispatcher.wait_for(seqno, payload.cmd)
                 # for 3.4 devices, we get the starting seqno with the SESS_KEY_NEG_RESP message
                 self.seqno = msg.seqno
-            except Exception:
+            except asyncio.TimeoutError:
+                _LOGGER.info(
+                    "[%s] Session key negotiation timeout (cmd %d, %s retries left)",
+                    self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
+                    payload.cmd,
+                    recv_retries - 1,
+                )
+                msg = None
+            except Exception as ex:
+                _LOGGER.info(
+                    "[%s] Session key negotiation error: %s (%s)",
+                    self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
+                    type(ex).__name__,
+                    ex,
+                )
                 msg = None
             if msg and len(msg.payload) != 0:
                 return msg
@@ -974,13 +991,18 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
             MessagePayload(SESS_KEY_NEG_START, self.local_nonce), 2
         )
         if not rkey or not isinstance(rkey, TuyaMessage) or len(rkey.payload) < 48:
-            # error
-            self.debug("session key negotiation failed on step 1")
+            _LOGGER.info(
+                "[%s] Session key negotiation failed: no/invalid response (step 1)",
+                self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
+            )
             return False
 
         if rkey.cmd != SESS_KEY_NEG_RESP:
-            self.debug(
-                "session key negotiation step 2 returned wrong command: %d", rkey.cmd
+            _LOGGER.info(
+                "[%s] Session key negotiation failed: wrong cmd %d (expected %d)",
+                self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
+                rkey.cmd,
+                SESS_KEY_NEG_RESP,
             )
             return False
 
@@ -990,10 +1012,9 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
             cipher = AESCipher(self.real_local_key)
             payload = cipher.decrypt(payload, False, decode_text=False)
         except Exception as ex:
-            self.debug(
-                "session key step 2 decrypt failed, payload=%r with len:%d (%s)",
-                payload,
-                len(payload),
+            _LOGGER.info(
+                "[%s] Session key negotiation failed: decrypt error (%s)",
+                self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
                 ex,
             )
             return False
@@ -1001,7 +1022,11 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
         self.debug("decrypted session key negotiation step 2: payload=%r", payload)
 
         if len(payload) < 48:
-            self.debug("session key negotiation step 2 failed, too short response")
+            _LOGGER.info(
+                "[%s] Session key negotiation failed: response too short (%d bytes)",
+                self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
+                len(payload),
+            )
             return False
 
         self.remote_nonce = payload[:16]
@@ -1174,23 +1199,61 @@ async def connect(
     enable_debug,
     listener=None,
     port=6668,
+    ports=None,
     timeout=5,
 ):
-    """Connect to a device."""
-    loop = asyncio.get_running_loop()
-    on_connected = loop.create_future()
-    _, protocol = await loop.create_connection(
-        lambda: TuyaProtocol(
-            device_id,
-            local_key,
-            protocol_version,
-            enable_debug,
-            on_connected,
-            listener or EmptyListener(),
-        ),
-        address,
-        port,
-    )
+    """Connect to a device.
 
-    await asyncio.wait_for(on_connected, timeout=timeout)
-    return protocol
+    Args:
+        address: Device IP address.
+        device_id: Tuya device ID.
+        local_key: Tuya local key.
+        protocol_version: Protocol version (3.1, 3.2, 3.3, 3.4).
+        enable_debug: Enable debug logging.
+        listener: Optional TuyaListener for status updates.
+        port: Single port to try (used when ports is None).
+        ports: List of ports to try in order. If provided, overrides port.
+        timeout: Connection timeout per port.
+
+    Returns:
+        TuyaProtocol instance on success.
+    """
+    loop = asyncio.get_running_loop()
+    ports_to_try = ports if ports is not None else [port]
+    last_error = None
+    multi_port = len(ports_to_try) > 1
+
+    for p in ports_to_try:
+        if multi_port:
+            _LOGGER.info("Trying %s:%d", address, p)
+        on_connected = loop.create_future()
+        try:
+            _, protocol = await loop.create_connection(
+                lambda oc=on_connected: TuyaProtocol(
+                    device_id,
+                    local_key,
+                    protocol_version,
+                    enable_debug,
+                    oc,
+                    listener or EmptyListener(),
+                ),
+                address,
+                p,
+            )
+            await asyncio.wait_for(on_connected, timeout=timeout)
+            if multi_port:
+                _LOGGER.info("Connected to %s on port %d", address, p)
+            return protocol
+        except (ConnectionRefusedError, ConnectionResetError, OSError) as ex:
+            last_error = ex
+            errno_str = f" errno={getattr(ex, 'errno', '?')}" if hasattr(ex, "errno") else ""
+            _LOGGER.info("Port %d failed%s: %s", p, errno_str, ex)
+            continue
+        except asyncio.TimeoutError as ex:
+            last_error = ex
+            _LOGGER.info("Port %d timeout after %ds", p, timeout)
+            continue
+
+    if last_error is not None:
+        raise last_error
+    raise ConnectionError("Failed to connect to device")
