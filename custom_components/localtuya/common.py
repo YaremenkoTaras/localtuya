@@ -229,8 +229,8 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
             )
             # Don't add dps_to_request before first status - some devices (e.g. heat pumps)
             # reject the connection when specific DPs are requested in the initial query.
-            # Brief delay: some devices need time after TCP connect before first Tuya packet.
-            await asyncio.sleep(0.5)
+            # Delay: some devices need time after TCP connect before first Tuya packet.
+            await asyncio.sleep(1.5)
         except Exception as ex:  # pylint: disable=broad-except
             self._last_connect_failure = time.time()
             host = self._dev_config_entry[CONF_HOST]
