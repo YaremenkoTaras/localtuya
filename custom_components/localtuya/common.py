@@ -152,6 +152,7 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
         self._default_reset_dpids = None
         self._last_disconnect_log = 0.0
         self._last_connect_attempt_log = 0.0
+        self._last_connect_failure = 0.0  # throttle reconnect after failure
         if CONF_RESET_DPIDS in self._dev_config_entry:
             reset_ids_str = self._dev_config_entry[CONF_RESET_DPIDS].split(",")
 
@@ -181,7 +182,10 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
 
     def async_connect(self):
         """Connect to device if not already connected."""
-        # self.info("async_connect: %d %r %r", self._is_closing, self._connect_task, self._interface)
+        now = time.time()
+        # Throttle: avoid hammering device when discovery keeps finding it
+        if now - self._last_connect_failure < 60:
+            return
         if not self._is_closing and self._connect_task is None and not self._interface:
             self._connect_task = asyncio.create_task(self._make_connection())
 
@@ -202,8 +206,12 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                 self,
                 ports=pytuya.DEFAULT_PORTS,
             )
-            self._interface.add_dps_to_request(self.dps_to_request)
+            # Don't add dps_to_request before first status - some devices (e.g. heat pumps)
+            # reject the connection when specific DPs are requested in the initial query.
+            # Brief delay: some devices need time after TCP connect before first Tuya packet.
+            await asyncio.sleep(0.5)
         except Exception as ex:  # pylint: disable=broad-except
+            self._last_connect_failure = time.time()
             host = self._dev_config_entry[CONF_HOST]
             ports_str = ",".join(str(p) for p in pytuya.DEFAULT_PORTS)
             self.warning(
@@ -224,6 +232,7 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                     if status is None:
                         raise Exception("Failed to retrieve status")
 
+                    self._interface.add_dps_to_request(self.dps_to_request)
                     self._interface.start_heartbeat()
                     self.status_updated(status)
 
@@ -247,9 +256,11 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                         if status is None or not status:
                             raise Exception("Failed to retrieve status") from ex
 
+                        self._interface.add_dps_to_request(self.dps_to_request)
                         self._interface.start_heartbeat()
                         self.status_updated(status)
                     else:
+                        self._last_connect_failure = time.time()
                         self.error(
                             "Initial state update failed, giving up: %s (%s)",
                             type(ex).__name__,
@@ -372,6 +383,7 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
     @callback
     def disconnected(self):
         """Device disconnected."""
+        self._last_connect_failure = time.time()
         signal = f"localtuya_{self._dev_config_entry[CONF_DEVICE_ID]}"
         async_dispatcher_send(self._hass, signal, None)
         if self._unsub_interval is not None:
