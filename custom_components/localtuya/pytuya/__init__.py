@@ -727,16 +727,16 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
                 # for 3.4 devices, we get the starting seqno with the SESS_KEY_NEG_RESP message
                 self.seqno = msg.seqno
             except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "[%s] Session key negotiation timeout (cmd %d, %s retries left)",
+                _LOGGER.warning(
+                    "[%s] Session key negotiation timeout (cmd %d, %s retries left)",
                     self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
                     payload.cmd,
                     recv_retries - 1,
                 )
                 msg = None
             except Exception as ex:
-            _LOGGER.warning(
-                "[%s] Session key negotiation error: %s (%s)",
+                _LOGGER.warning(
+                    "[%s] Session key negotiation error: %s (%s)",
                     self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id,
                     type(ex).__name__,
                     ex,
