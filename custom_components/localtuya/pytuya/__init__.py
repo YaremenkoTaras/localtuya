@@ -673,6 +673,9 @@ class TuyaProtocol(asyncio.Protocol, ContextualLogger):
     def connection_lost(self, exc):
         """Disconnected from device."""
         self.debug("Connection lost: %s", exc)
+        if exc is not None:
+            dev_id = self.id[:8] + "..." + self.id[-4:] if len(self.id) > 12 else self.id
+            _LOGGER.warning("[%s] Connection lost: %s", dev_id, exc)
         self.real_local_key = self.local_key
         try:
             listener = self.listener and self.listener()
@@ -1224,8 +1227,6 @@ async def connect(
     multi_port = len(ports_to_try) > 1
 
     for p in ports_to_try:
-        if multi_port:
-            _LOGGER.warning("Trying %s:%d", address, p)
         on_connected = loop.create_future()
         try:
             _, protocol = await loop.create_connection(
@@ -1241,8 +1242,8 @@ async def connect(
                 p,
             )
             await asyncio.wait_for(on_connected, timeout=timeout)
-            if multi_port:
-                _LOGGER.warning("Connected to %s on port %d", address, p)
+            if multi_port and p != ports_to_try[0]:
+                _LOGGER.warning("Connected to %s on port %d (fallback)", address, p)
             return protocol
         except (ConnectionRefusedError, ConnectionResetError, OSError) as ex:
             last_error = ex
