@@ -217,20 +217,24 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
             self.warning("Trying to connect to %s...", self._dev_config_entry[CONF_HOST])
 
         try:
+            # pytuya supports 3.1-3.4 only; devices reporting 3.5 use 3.4 protocol
+            proto = float(self._dev_config_entry[CONF_PROTOCOL_VERSION])
+            if proto >= 3.5:
+                proto = 3.4
             initial_listener = _InitialConnectListener(self)
             self._interface = await pytuya.connect(
                 self._dev_config_entry[CONF_HOST],
                 self._dev_config_entry[CONF_DEVICE_ID],
                 self._local_key,
-                float(self._dev_config_entry[CONF_PROTOCOL_VERSION]),
+                proto,
                 self._dev_config_entry.get(CONF_ENABLE_DEBUG, False),
                 initial_listener,
                 ports=pytuya.DEFAULT_PORTS,
             )
             # Don't add dps_to_request before first status - some devices (e.g. heat pumps)
             # reject the connection when specific DPs are requested in the initial query.
-            # Brief delay: some devices need time after TCP connect before first Tuya packet.
-            await asyncio.sleep(0.5)
+            # Delay: some devices need time after TCP connect before first Tuya packet.
+            await asyncio.sleep(1.5)
         except Exception as ex:  # pylint: disable=broad-except
             self._last_connect_failure = time.time()
             host = self._dev_config_entry[CONF_HOST]
