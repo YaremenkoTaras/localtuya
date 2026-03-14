@@ -157,7 +157,7 @@ You can obtain Energy monitoring (voltage, current) in two different ways:
 
 # Debugging
 
-When connection issues occur, the integration logs diagnostic info at INFO level:
+When connection issues occur, the integration logs diagnostic info (visible with default log level):
 - Port attempts: `Trying 192.168.68.52:6668`, `Port 6668 failed errno=104: ...`
 - Connection failure: `Failed to connect to X (tried ports 6668,6669,8681): ...`
 - Session key (3.4): timeout or decrypt errors

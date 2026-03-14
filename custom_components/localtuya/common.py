@@ -186,7 +186,7 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
 
     async def _make_connection(self):
         """Subscribe localtuya entity events."""
-        self.info("Trying to connect to %s...", self._dev_config_entry[CONF_HOST])
+        self.warning("Trying to connect to %s...", self._dev_config_entry[CONF_HOST])
 
         try:
             self._interface = await pytuya.connect(
@@ -232,7 +232,7 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                     if (self._default_reset_dpids is not None) and (
                         len(self._default_reset_dpids) > 0
                     ):
-                        self.info(
+                        self.warning(
                             "Trying reset command for DP IDs: %s",
                             self._default_reset_dpids,
                         )
