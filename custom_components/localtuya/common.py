@@ -143,9 +143,11 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
         self._interface = None
         self._status = {}
         self.dps_to_request = {}
+        self._suppress_initial_status = False
         self._is_closing = False
         self._connect_task = None
         self._disconnect_task = None
+        self._last_disconnect_time = 0.0
         self._unsub_interval = None
         self._entities = []
         self._local_key = self._dev_config_entry[CONF_LOCAL_KEY]
@@ -179,8 +181,10 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
 
     def async_connect(self):
         """Connect to device if not already connected."""
-        # self.info("async_connect: %d %r %r", self._is_closing, self._connect_task, self._interface)
         if not self._is_closing and self._connect_task is None and not self._interface:
+            cooldown = 30.0
+            if time.time() - self._last_disconnect_time < cooldown:
+                return
             self._connect_task = asyncio.create_task(self._make_connection())
 
     async def _make_connection(self):
@@ -188,6 +192,7 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
         self.info("Trying to connect to %s...", self._dev_config_entry[CONF_HOST])
 
         try:
+            self._suppress_initial_status = True
             self._interface = await pytuya.connect(
                 self._dev_config_entry[CONF_HOST],
                 self._dev_config_entry[CONF_DEVICE_ID],
@@ -195,11 +200,15 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                 float(self._dev_config_entry[CONF_PROTOCOL_VERSION]),
                 self._dev_config_entry.get(CONF_ENABLE_DEBUG, False),
                 self,
+                ports=pytuya.DEFAULT_PORTS,
             )
-            self._interface.add_dps_to_request(self.dps_to_request)
+            await asyncio.sleep(1.5)
         except Exception as ex:  # pylint: disable=broad-except
+            self._suppress_initial_status = False
             self.warning(
-                f"Failed to connect to {self._dev_config_entry[CONF_HOST]}: %s", ex
+                "Failed to connect to %s: %s",
+                self._dev_config_entry[CONF_HOST],
+                ex,
             )
             if self._interface is not None:
                 await self._interface.close()
@@ -213,6 +222,8 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                     if status is None:
                         raise Exception("Failed to retrieve status")
 
+                    self._suppress_initial_status = False
+                    self._interface.add_dps_to_request(self.dps_to_request)
                     self._interface.start_heartbeat()
                     self.status_updated(status)
 
@@ -232,15 +243,19 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
                         if status is None or not status:
                             raise Exception("Failed to retrieve status") from ex
 
+                        self._suppress_initial_status = False
+                        self._interface.add_dps_to_request(self.dps_to_request)
                         self._interface.start_heartbeat()
                         self.status_updated(status)
                     else:
+                        self._suppress_initial_status = False
                         self.error("Initial state update failed, giving up: %r", ex)
                         if self._interface is not None:
                             await self._interface.close()
                             self._interface = None
 
             except (UnicodeDecodeError, json.decoder.JSONDecodeError) as ex:
+                self._suppress_initial_status = False
                 self.warning("Initial state update failed (%s), trying key update", ex)
                 await self.update_local_key()
 
@@ -343,6 +358,8 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
     @callback
     def status_updated(self, status):
         """Device updated status."""
+        if self._suppress_initial_status:
+            return
         self._status.update(status)
         self._dispatch_status()
 
@@ -359,11 +376,12 @@ class TuyaDevice(pytuya.TuyaListener, pytuya.ContextualLogger):
             self._unsub_interval()
             self._unsub_interval = None
         self._interface = None
+        self._last_disconnect_time = time.time()
 
         if self._connect_task is not None:
             self._connect_task.cancel()
             self._connect_task = None
-        self.warning("Disconnected - waiting for discovery broadcast")
+        self.warning("Disconnected - waiting 30s before reconnect")
 
 
 class LocalTuyaEntity(RestoreEntity, pytuya.ContextualLogger):
